@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Utility Bill Decoder</title>
+<style>
+  :root {
+    --bg: #070b16; --card: rgba(16, 24, 44, .72); --ink: #e6edff; --muted: #8b9ac0; --line: rgba(120, 150, 255, .18);
+    --accent: #22e3c4; --accent2: #7c5cff; --accent-ink: #04141a;
+    --warn: #ffb347; --warn-bg: rgba(255, 179, 71, .12); --ok-bg: rgba(34, 227, 196, .10);
+    --glow: 0 0 22px rgba(34, 227, 196, .25);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; color: var(--ink); font: 15px/1.5 system-ui, "Segoe UI", sans-serif; min-height: 100vh; background: var(--bg); overflow-x: hidden; }
+  /* slow-moving aurora + faint grid behind everything */
+  body::before { content: ""; position: fixed; inset: -20%; z-index: -2; filter: blur(60px);
+    background: radial-gradient(40% 40% at 20% 20%, rgba(124, 92, 255, .35), transparent),
+                radial-gradient(35% 35% at 80% 30%, rgba(34, 227, 196, .25), transparent),
+                radial-gradient(40% 40% at 50% 90%, rgba(60, 120, 255, .25), transparent);
+    animation: drift 18s ease-in-out infinite alternate; }
+  body::after { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
+    background-size: 48px 48px; opacity: .35; mask-image: radial-gradient(circle at 50% 30%, #000, transparent 75%); }
+  @keyframes drift { to { transform: translate(6%, 4%) scale(1.15); } }
+
+  header { display: flex; align-items: center; gap: 12px; padding: 16px 24px; border-bottom: 1px solid var(--line); background: rgba(7, 11, 22, .6); backdrop-filter: blur(10px); position: relative; }
+  header::after { content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent), var(--accent2), transparent); background-size: 200% 100%; animation: flow 4s linear infinite; }
+  @keyframes flow { to { background-position: 200% 0; } }
+  header h1 { margin: 0; font-size: 19px; letter-spacing: .04em; background: linear-gradient(90deg, var(--accent), var(--accent2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .pill { font-size: 12px; padding: 2px 10px; border-radius: 99px; border: 1px solid var(--accent); color: var(--accent); box-shadow: var(--glow); animation: pulse 2.4s ease-in-out infinite; }
+  @keyframes pulse { 50% { box-shadow: 0 0 4px rgba(34, 227, 196, .1); } }
+
+  main { display: grid; grid-template-columns: minmax(320px, 5fr) 6fr; gap: 20px; padding: 20px 24px; align-items: start; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 16px; backdrop-filter: blur(12px); box-shadow: 0 8px 30px rgba(0, 0, 0, .35); }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .14em; color: var(--accent); margin: 0 0 10px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  select, input[type=text], button { font: inherit; border-radius: 10px; border: 1px solid var(--line); padding: 8px 12px; background: rgba(8, 14, 30, .8); color: var(--ink); transition: .2s; }
+  select:focus, input:focus { outline: none; border-color: var(--accent); box-shadow: var(--glow); }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); transform: translateY(-1px); }
+  button.primary { background: linear-gradient(120deg, var(--accent), var(--accent2)); color: var(--accent-ink); border: 0; font-weight: 700; box-shadow: var(--glow); }
+  button.primary:hover { box-shadow: 0 0 30px rgba(124, 92, 255, .6); }
+  button:disabled { opacity: .5; cursor: wait; transform: none; }
+  #drop { margin-top: 12px; border: 2px dashed var(--line); border-radius: 12px; padding: 12px; text-align: center; color: var(--muted); font-size: 13px; transition: .2s; }
+  #drop.over { border-color: var(--accent); color: var(--accent); box-shadow: var(--glow); }
+  #viewer { position: relative; margin-top: 12px; max-height: 78vh; overflow: auto; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+  #viewer img { width: 100%; display: block; }
+  /* neon scan line sweeps down the bill while it is being read */
+  #scan { position: absolute; left: 0; right: 0; top: 0; height: 3px; display: none; z-index: 2; background: linear-gradient(90deg, transparent, var(--accent), transparent); box-shadow: 0 0 18px 6px rgba(34, 227, 196, .55); animation: scan 2.2s ease-in-out infinite alternate; }
+  #viewer.scanning #scan { display: block; }
+  @keyframes scan { from { top: 0; } to { top: 100%; } }
+  #left { position: sticky; top: 16px; }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: 14px; }
+  .tab { border-radius: 99px; padding: 6px 16px; }
+  .tab.on { background: linear-gradient(120deg, var(--accent), var(--accent2)); color: var(--accent-ink); border: 0; font-weight: 700; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
+  .stat { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: rgba(8, 14, 30, .5); transition: .2s; animation: rise .5s both; }
+  .stat:hover { border-color: var(--accent); box-shadow: var(--glow); transform: translateY(-2px); }
+  .stat b { display: block; font-size: 19px; color: #fff; }
+  .stat span { font-size: 12px; color: var(--muted); }
+  .grid .stat:nth-child(2) { animation-delay: .05s; } .grid .stat:nth-child(3) { animation-delay: .1s; } .grid .stat:nth-child(4) { animation-delay: .15s; }
+  .grid .stat:nth-child(5) { animation-delay: .2s; } .grid .stat:nth-child(6) { animation-delay: .25s; } .grid .stat:nth-child(n+7) { animation-delay: .3s; }
+  @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td, th { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .chip { font-size: 12px; padding: 1px 8px; border-radius: 99px; background: rgba(124, 92, 255, .18); border: 1px solid rgba(124, 92, 255, .5); color: #c9bfff; }
+  .neg { color: var(--accent); }
+  .null { color: var(--muted); font-style: italic; }
+  .bars { display: flex; align-items: flex-end; gap: 6px; height: 170px; padding-top: 18px; }
+  .bar { flex: 1; position: relative; height: var(--h); min-height: 3px; border-radius: 6px 6px 2px 2px; background: linear-gradient(180deg, rgba(124, 92, 255, .9), rgba(124, 92, 255, .25)); transform-origin: bottom; animation: grow .6s both; }
+  .bar.now { background: linear-gradient(180deg, var(--accent), rgba(34, 227, 196, .25)); box-shadow: var(--glow); }
+  .bar i { position: absolute; top: -18px; left: 0; right: 0; text-align: center; font-size: 10.5px; font-style: normal; color: var(--muted); }
+  .bar span { position: absolute; bottom: -18px; left: 0; right: 0; text-align: center; font-size: 10px; color: var(--muted); }
+  .bars + * { margin-top: 26px; }
+  .section:has(.bars) { padding-bottom: 18px; }
+  @keyframes grow { from { transform: scaleY(0); } }
+  .check { padding: 8px 12px; border-radius: 10px; margin-bottom: 14px; font-size: 14px; background: var(--ok-bg); color: var(--accent); border: 1px solid rgba(34, 227, 196, .35); animation: rise .4s both; }
+  .check.bad { background: var(--warn-bg); color: var(--warn); border-color: rgba(255, 179, 71, .4); }
+  .section { margin-top: 18px; animation: rise .5s .2s both; }
+  .steps { list-style: none; padding: 0; margin: 0; color: var(--muted); }
+  .steps li { padding: 3px 0; }
+  .steps li::before { content: "○ "; }
+  .steps li.done { color: var(--accent); }
+  .steps li.done::before { content: "● "; }
+  .steps li.now { color: var(--ink); }
+  .steps li.now::before { content: "◐ "; display: inline-block; color: var(--accent); animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+  .chips button { font-size: 13px; border-radius: 99px; }
+  .msg { margin: 10px 0; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--line); background: rgba(8, 14, 30, .5); animation: rise .35s both; }
+  .msg.q { background: rgba(124, 92, 255, .16); border-color: rgba(124, 92, 255, .45); font-weight: 600; }
+  .msg.err { color: var(--warn); background: var(--warn-bg); }
+  pre { white-space: pre-wrap; word-break: break-word; font-size: 12.5px; background: rgba(4, 8, 18, .8); color: #9ff5e4; padding: 10px; border-radius: 10px; max-height: 320px; overflow: auto; }
+  summary { cursor: pointer; color: var(--accent); }
+  .hidden { display: none; }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Utility Bill Decoder</h1>
+  <span class="pill" id="model">…</span>
+  <span style="color:var(--muted)">K-Electric · LESCO · IESCO</span>
+</header>
+
+<main>
+  <section id="left" class="card">
+    <h2>1 · Choose a bill</h2>
+    <div class="row">
+      <select id="pick" style="flex:1"></select>
+      <button class="primary" id="go">Extract</button>
+    </div>
+    <div id="drop">…or drop a bill image here</div>
+    <div id="viewer" class="hidden"><div id="scan"></div><img id="img" alt="Selected bill"></div>
+  </section>
+
+  <section id="right">
+    <div class="tabs">
+      <button class="tab on" data-t="l1">Level 1 · Extraction</button>
+      <button class="tab" data-t="l2">Level 2 · Ask about this bill</button>
+    </div>
+
+    <div id="l1" class="card">
+      <div id="empty" style="color:var(--muted)">Pick a bill and press <b>Extract</b>. The image is read by the model, then the numbers are cross-checked in code.</div>
+      <ul class="steps hidden" id="steps">
+        <li>Reading the bill image</li><li>Extracting fields with the model</li><li>Cross-checking totals and readings</li>
+      </ul>
+      <div id="result" class="hidden"></div>
+    </div>
+
+    <div id="l2" class="card hidden">
+      <h2>Ask a question</h2>
+      <div class="chips" id="sugg"></div>
+      <div class="row"><input type="text" id="q" style="flex:1" placeholder="e.g. How much of my bill is taxes?"><button class="primary" id="ask">Ask</button></div>
+      <div id="chat"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const fmt = v => v == null ? null : typeof v === "number" ? v.toLocaleString("en-PK", { maximumFractionDigits: 2 }) : v;
+const pretty = s => s.replace(/_/g, " ");
+let sid = null, upload = null;
+
+const SUGGESTED = [
+  "How much of my bill is taxes?",
+  "How many months in my history went above 200 units?",
+  "Is this month higher or lower than my usual usage?",
+  "What would I pay if I paid after the due date?",
+  "If I cut my usage by 10%, roughly what would my bill be?",
+];
+
+async function init() {
+  const info = await (await fetch("/bills")).json();
+  $("model").textContent = info.model;
+  info.bills.forEach(b => $("pick").add(new Option(b, b)));
+  showBundled();
+  SUGGESTED.forEach(t => { const b = el("button", null, t); b.onclick = () => { $("q").value = t; ask(); }; $("sugg").append(b); });
+}
+function show(src) { $("img").src = src; $("viewer").classList.remove("hidden"); }
+function showBundled() { upload = null; if ($("pick").value) show("/img?bill=" + encodeURIComponent($("pick").value)); }
+$("pick").onchange = showBundled;
+
+const drop = $("drop");
+drop.ondragover = e => { e.preventDefault(); drop.classList.add("over"); };
+drop.ondragleave = () => drop.classList.remove("over");
+drop.ondrop = e => {
+  e.preventDefault(); drop.classList.remove("over");
+  const f = e.dataTransfer.files[0];
+  if (f && f.type.startsWith("image/")) { upload = f; drop.textContent = "Selected: " + f.name; show(URL.createObjectURL(f)); }
+};
+
+document.querySelectorAll(".tab").forEach(t => t.onclick = () => {
+  document.querySelectorAll(".tab").forEach(x => x.classList.toggle("on", x === t));
+  $("l1").classList.toggle("hidden", t.dataset.t !== "l1");
+  $("l2").classList.toggle("hidden", t.dataset.t !== "l2");
+});
+
+function setStep(i) { [...$("steps").children].forEach((li, k) => li.className = k < i ? "done" : k === i ? "now" : ""); }
+
+$("go").onclick = async () => {
+  $("go").disabled = true; $("viewer").classList.add("scanning"); sid = null; $("chat").replaceChildren();
+  $("empty").classList.add("hidden"); $("result").classList.add("hidden"); $("steps").classList.remove("hidden");
+  setStep(0); const t1 = setTimeout(() => setStep(1), 1200); const t2 = setTimeout(() => setStep(2), 12000);
+  try {
+    const r = await fetch(upload ? "/extract?name=" + encodeURIComponent(upload.name) : "/extract?bill=" + encodeURIComponent($("pick").value),
+                          { method: "POST", body: upload || "" });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    sid = d.sid; setStep(3); render(d);
+  } catch (e) {
+    $("result").replaceChildren(el("div", "msg err", "Extraction failed: " + e.message)); $("result").classList.remove("hidden");
+  } finally { clearTimeout(t1); clearTimeout(t2); $("go").disabled = false; $("viewer").classList.remove("scanning"); $("steps").classList.add("hidden"); }
+};
+
+function stat(label, v) { const s = el("div", "stat"); const b = el("b", v == null ? "null" : "", v == null ? "—" : fmt(v)); s.append(b, el("span", null, label)); return s; }
+
+function lines(title, rows, total) {
+  const wrap = el("div", "section"); wrap.append(el("h2", null, title));
+  const t = el("table"); const head = t.createTHead().insertRow();
+  head.append(el("th", null, "Type"), el("th", "n", "PKR"));
+  const tb = t.createTBody();
+  if (!rows.length) { const r = tb.insertRow(); r.append(el("td", "null", "No individual lines printed"), el("td")); }
+  rows.forEach(x => { const r = tb.insertRow(); const c = r.insertCell(); c.append(el("span", "chip", pretty(x.type)));
+    r.insertCell().append(Object.assign(el("span", x.amount < 0 ? "neg" : "", fmt(x.amount)), {})); r.cells[1].className = "n"; });
+  const f = tb.insertRow(); f.append(el("td", null, "Printed total")); const tc = el("td", "n", total == null ? "—" : fmt(total)); tc.style.fontWeight = 700; f.append(tc);
+  wrap.append(t); return wrap;
+}
+
+const EXPLAIN = "Explain this bill to me in plain English in 4-6 sentences: what I owe and by when, what makes up the amount " +
+  "(main charges and taxes), how this month's usage compares with my history, and one practical tip based only on this bill.";
+
+function chart(l1, hist) {  // usage bars from the history read off the bill; current month highlighted
+  const pts = (hist.usage_history || []).filter(h => typeof h.units === "number").map(h => [h.month, h.units]);
+  if (l1.units_consumed != null) pts.push([l1.bill_month + " (now)", l1.units_consumed]);
+  if (pts.length < 2) return null;
+  const max = Math.max(...pts.map(p => p[1])) || 1, wrap = el("div", "section"), bars = el("div", "bars");
+  wrap.append(el("h2", null, "Monthly units (from the bill's history)"));
+  pts.forEach(([m, u], i) => {
+    const b = el("div", "bar" + (i === pts.length - 1 ? " now" : "")); b.title = `${m}: ${u} units`;
+    b.style.setProperty("--h", (u / max * 100) + "%"); b.style.animationDelay = (i * 0.04) + "s";
+    b.append(el("i", null, u), el("span", null, String(m).slice(2, 7)));
+    bars.append(b);
+  });
+  wrap.append(bars); return wrap;
+}
+
+async function explain(btn, box) {
+  btn.disabled = true; box.className = "msg"; box.textContent = "Reading the bill…";
+  try {
+    const d = await (await fetch("/ask", { method: "POST", body: JSON.stringify({ sid, question: EXPLAIN }) })).json();
+    if (d.error) throw new Error(d.error);
+    box.textContent = d.answer;
+  } catch (e) { box.className = "msg err"; box.textContent = "Failed: " + e.message; }
+  finally { btn.disabled = false; }
+}
+
+function render({ l1, hist, issues }) {
+  const out = $("result"); out.replaceChildren();
+  const c = el("div", issues.length ? "check bad" : "check",
+    issues.length ? "Self-check flagged: " + issues.join(" · ") : "✓ Self-checks passed: readings, line totals and payable amounts are consistent");
+  out.append(c);
+  const btn = el("button", "primary", "✨ Explain this bill"), box = el("div", "hidden");
+  btn.onclick = () => explain(btn, box);
+  out.append(btn, box);
+  const g = el("div", "grid");
+  [["Provider", l1.provider], ["Tariff", l1.tariff], ["Bill month", l1.bill_month], ["Sanctioned load (kW)", l1.sanctioned_load_kw],
+   ["Units consumed", l1.units_consumed], ["Current bill (PKR)", l1.current_bill], ["Payable by due date", l1.payable_within_due_date],
+   ["Payable after due date", l1.payable_after_due_date], ["Arrears", l1.arrears]].forEach(([k, v]) => g.append(stat(k, v)));
+  g.classList.add("section"); out.append(g);
+  const ch = chart(l1, hist); if (ch) out.append(ch);
+  const g2 = el("div", "grid section");
+  [["Reading date", l1.reading_date], ["Issue date", l1.issue_date], ["Due date", l1.due_date],
+   ["Previous reading", l1.previous_reading], ["Current reading", l1.current_reading]].forEach(([k, v]) => g2.append(stat(k, v)));
+  out.append(g2);
+  out.append(lines("Charges", l1.charges, l1.total_charges), lines("Taxes", l1.taxes, l1.total_taxes));
+  const det = el("details"); det.className = "section"; det.append(el("summary", null, "Raw JSON (what goes into level1.csv)"), el("pre", null, JSON.stringify(l1, null, 2)));
+  out.append(det); out.classList.remove("hidden");
+}
+
+async function ask() {
+  const q = $("q").value.trim();
+  if (!q) return;
+  if (!sid) { $("chat").append(el("div", "msg err", "Extract a bill first (left side).")); return; }
+  $("q").value = ""; $("ask").disabled = true;
+  $("chat").prepend(el("div", "msg q", q)); const wait = el("div", "msg", "Thinking…"); $("chat").children[0].after(wait);
+  try {
+    const d = await (await fetch("/ask", { method: "POST", body: JSON.stringify({ sid, question: q }) })).json();
+    if (d.error) throw new Error(d.error);
+    wait.textContent = d.answer;
+  } catch (e) { wait.className = "msg err"; wait.textContent = "Failed: " + e.message; }
+  finally { $("ask").disabled = false; }
+}
+$("ask").onclick = ask;
+$("q").onkeydown = e => { if (e.key === "Enter") ask(); };
+init();
+</script>
+</body>
+</html>
